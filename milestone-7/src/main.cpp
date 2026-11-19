@@ -1715,8 +1715,9 @@ static uint32_t monoMs() {
 // written in place like the menu-entry state) and served on the control port:
 //   "media"               -> the record, as a UDP reply (the app polls this while its Now Playing page is up)
 //   "media next" / "prev" / "playpause" / "play" / "pause" -> the Android media key to the phone (input channel 7)
-// The keys also come from the steering wheel (car/mfl.hpp, NBT_MFL_*). Both are only forwarded when the audio mode is not
-// Bluetooth, where the phone already plays over A2DP and the car's own AVRCP handling owns those keys.
+// The keys also come from the steering wheel (car/mfl.hpp, NBT_MFL_*). Both are forwarded when the audio mode is not
+// Bluetooth (the phone plays over A2DP and the car's own AVRCP owns those keys) — or, in Bluetooth mode, when Android
+// Auto is over USB, where the phone is in accessory mode and the car's AVRCP can no longer reach the media app.
 static const char* const kMediaFile = "/dev/shmem/nbt-aad-media";
 static nbt::MediaState g_media;
 static pthread_mutex_t g_mediaMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -2184,8 +2185,10 @@ int main(int argc, char* argv[]) {
                                                                      : "; Use Native Audio instead of Bluetooth is off");
     }
     // Steering-wheel / control-port media keys go to the phone only when its media does not come over A2DP: in Bluetooth
-    // mode the car's own AVRCP handling already owns those keys (audio/media_state.hpp, car/mfl.hpp).
-    g_mediaKeysToPhone = audio_mode != nbt::AUDIO_MODE_BT;
+    // mode the car's own AVRCP handling already owns those keys (audio/media_state.hpp, car/mfl.hpp). Exception: with
+    // Android Auto over USB the phone is in accessory mode, where the car's AVRCP no longer drives the foreground media
+    // app, so those keys are lost — forward them to Android Auto even in Bluetooth audio mode then.
+    g_mediaKeysToPhone = audio_mode != nbt::AUDIO_MODE_BT || nbt::usbEnabled();
     g_wheelMediaKeys = nbt::lciMediaKeysEnabled();
     printf("[Media] steering-wheel media keys: %s\n",
            g_wheelMediaKeys ? "on (Media Controls for LCI Steering Wheels)"

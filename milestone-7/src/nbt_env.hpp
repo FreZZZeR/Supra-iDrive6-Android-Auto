@@ -146,7 +146,8 @@ inline bool phoneGpsEnabled() { return usbSettingOn(getenv("NBT_PHONE_GPS"), pho
 // "Media Controls for LCI Steering Wheels" (iDrive Settings checkbox, rhmiapp-45; flag kLciMediaFlagName, a hand-made
 // one also counts; NBT_LCI_MEDIA=1 / 0 wins either way, same words as NBT_USB). Off by default: the steering wheel's
 // previous / next / play-pause (MOST 15/02, car/mfl.hpp, NBT_MFL_*) become Android media keys only with it on, and
-// still only in a non-Bluetooth audio mode. Read at the start of the daemon.
+// only in a non-Bluetooth audio mode or with Android Auto over USB (accessory mode, where the car's own AVRCP cannot
+// reach the phone's media app, so the keys go to Android Auto instead). Read at the start of the daemon.
 static const char* const kLciMediaFlagName = "lci-media";
 inline bool lciMediaFlagFileSet() { return flagSet(kLciMediaFlagName); }
 inline bool lciMediaKeysEnabled() { return usbSettingOn(getenv("NBT_LCI_MEDIA"), lciMediaFlagFileSet()); }
