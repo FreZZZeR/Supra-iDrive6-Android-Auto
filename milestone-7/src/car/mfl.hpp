@@ -19,6 +19,15 @@
 // The J29's track roller sent 00 -> 02 -> 00 in pairs while the button was held (auto-repeat, ~3/s) and 01 the other
 // way, which is why the value has to take part in the mapping: one function, two directions.
 //
+//   3. Jog-dial / thumbwheel (NBT_MFL_JOG). Some wheels (BMW F30 thumbwheel, 15/02 fkt C30) are a rotary encoder, not a
+//      button: the payload is a POSITION around a centre (~0x7f), deflecting below when scrolled one way and above the
+//      other, and springing back to the centre. The button logic above can't use it (it never reads 0, and a repeated
+//      position would fire every message). NBT_MFL_JOG="C30" treats fkt C30 as a jog: a deflection to <=0x7d is one
+//      scroll step -> next, >=0x81 -> previous, edge-triggered with a dead band (0x7e..0x80) so one physical click =
+//      one key. "C30:7d:81" tunes the low / high thresholds. Off by default; the press (C31) stays a normal button
+//      (map it with NBT_MFL_PLAYPAUSE=C31 if wanted). Swap next/previous by narrowing the thresholds is not possible;
+//      if it scrolls the wrong way, that is a code change (the direction is fixed: low = next).
+//
 // Host-tested (tests/test_mfl.cpp). Plain C++98: the car builds with GCC 4.4.2.
 
 #include <stddef.h>
@@ -49,7 +58,10 @@ struct MflConfig {
     MflBinding b[kMflBindings];
     int n;
     bool log;           // NBT_MFL_LOG=0 silences the recon lines
-    MflConfig() : n(0), log(true) {}
+    int jogFkt;         // a jog-dial / roller function (value is a position around a centre); -1 = off (NBT_MFL_JOG)
+    int jogLo;          // value <= jogLo -> one scroll step, next (AAK_MEDIA_NEXT)
+    int jogHi;          // value >= jogHi -> one scroll step, previous (AAK_MEDIA_PREVIOUS); jogLo..jogHi is the dead band
+    MflConfig() : n(0), log(true), jogFkt(-1), jogLo(0x7d), jogHi(0x81) {}
 };
 
 // "FKT" or "FKT:VALUE", hex; several separated by commas. Appends what it understands, returns how many.
@@ -107,6 +119,21 @@ inline MflConfig readMflConfig() {
         mflDropKey(c, AAK_MEDIA_PLAY_PAUSE);
         mflParseBindings(getenv("NBT_MFL_PLAYPAUSE"), c.b, kMflBindings, &c.n, AAK_MEDIA_PLAY_PAUSE, "MFL_PLAYPAUSE");
     }
+    // Jog-dial / thumbwheel: NBT_MFL_JOG="FKT" or "FKT:LO:HI" (hex). A deflection of that function's value to <= LO is
+    // one scroll step (next), >= HI is one step (previous); LO..HI is the dead band. Off unless set.
+    const char* jog = getenv("NBT_MFL_JOG");
+    if (jog && *jog) {
+        char* end = NULL;
+        long f = strtol(jog, &end, 16);
+        if (end != jog && f > 0 && f <= 0x0FFF) {
+            c.jogFkt = (int)f;
+            if (*end == ':') {
+                long lo = strtol(end + 1, &end, 16);
+                long hi = (*end == ':') ? strtol(end + 1, &end, 16) : -1;
+                if (lo > 0 && hi > lo && hi <= 0xFF) { c.jogLo = (int)lo; c.jogHi = (int)hi; }
+            }
+        }
+    }
     c.log = envFlag("NBT_MFL_LOG") != 0;
     return c;
 }
@@ -121,7 +148,7 @@ class MflDecoder {
 public:
     enum { kFkts = 16 };
 
-    MflDecoder() : n_(0) {}
+    MflDecoder() : n_(0), jogZone_(0) {}
 
     void setConfig(const MflConfig& cfg) { cfg_ = cfg; }
 
@@ -164,6 +191,20 @@ public:
                 ++n;
             }
         }
+
+        // Jog-dial / roller: the value is a position around a centre. A deflection past a threshold is one scroll step,
+        // edge-triggered through the dead band so one physical click = one key (not one per status message). Emits a
+        // press (down=1) as "MFL_NEXT" / "MFL_PREV", which the caller forwards like a track button.
+        if (cfg_.jogFkt >= 0 && fkt == cfg_.jogFkt) {
+            const int zone = v <= cfg_.jogLo ? -1 : v >= cfg_.jogHi ? 1 : 0;
+            if (zone != 0 && zone != jogZone_ && n < max) {
+                out[n].down = 1;
+                out[n].keycode = zone < 0 ? AAK_MEDIA_NEXT : AAK_MEDIA_PREVIOUS;
+                out[n].what = zone < 0 ? "MFL_NEXT" : "MFL_PREV";
+                ++n;
+            }
+            jogZone_ = zone;
+        }
         return n;
     }
 
@@ -185,6 +226,7 @@ private:
     MflConfig cfg_;
     Slot seen_[kFkts];
     int n_;
+    int jogZone_;       // -1 deflected to next, +1 to previous, 0 in the dead band (for the jog edge trigger)
 };
 
 } // namespace car

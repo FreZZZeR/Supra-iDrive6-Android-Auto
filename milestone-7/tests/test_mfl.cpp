@@ -121,6 +121,34 @@ int main() {
         unsetenv("NBT_MFL_NEXT"); unsetenv("NBT_MFL_PREV"); unsetenv("NBT_MFL_PLAYPAUSE");
     }
 
+    // ---- jog-dial / thumbwheel (NBT_MFL_JOG): value is a position around a centre; a deflection past the dead band is
+    //      one scroll step, edge-triggered (F30 thumbwheel, 15/02 fkt C30: down 7b-7d = next, up 81-84 = previous).
+    {
+        setenv("NBT_MFL_JOG", "C30", 1);
+        setenv("NBT_MFL_LOG", "0", 1);
+        MflConfig c = readMflConfig();
+        CHECK(c.jogFkt == 0xC30 && c.jogLo == 0x7d && c.jogHi == 0x81);
+        MflDecoder d;
+        d.setConfig(c);
+        MflEvent ev[kMflBindings * 2];
+        CHECK(d.feed(0xC30, 0xC, (const uint8_t*)"\x7f", 1, ev, kMflBindings * 2) == 0);   // dead band: nothing
+        int n = d.feed(0xC30, 0xC, (const uint8_t*)"\x7c", 1, ev, kMflBindings * 2);        // scroll down
+        CHECK(n == 1 && ev[0].down == 1 && ev[0].keycode == AAK_MEDIA_NEXT);
+        CHECK(d.feed(0xC30, 0xC, (const uint8_t*)"\x7b", 1, ev, kMflBindings * 2) == 0);   // still deflected: no repeat
+        CHECK(d.feed(0xC30, 0xC, (const uint8_t*)"\x7e", 1, ev, kMflBindings * 2) == 0);   // back through the dead band
+        n = d.feed(0xC30, 0xC, (const uint8_t*)"\x7c", 1, ev, kMflBindings * 2);            // next click = next again
+        CHECK(n == 1 && ev[0].keycode == AAK_MEDIA_NEXT);
+        d.feed(0xC30, 0xC, (const uint8_t*)"\x7f", 1, ev, kMflBindings * 2);
+        n = d.feed(0xC30, 0xC, (const uint8_t*)"\x82", 1, ev, kMflBindings * 2);            // scroll up = previous
+        CHECK(n == 1 && ev[0].keycode == AAK_MEDIA_PREVIOUS);
+        setenv("NBT_MFL_JOG", "C30:70:90", 1);                                             // thresholds are tunable
+        MflConfig t = readMflConfig();
+        CHECK(t.jogFkt == 0xC30 && t.jogLo == 0x70 && t.jogHi == 0x90);
+        unsetenv("NBT_MFL_JOG");                                                           // off by default
+        CHECK(readMflConfig().jogFkt == -1);
+        unsetenv("NBT_MFL_LOG");
+    }
+
     if (fails) { printf("%d check(s) failed\n", fails); return 1; }
     printf("test_mfl: all checks passed\n");
     return 0;
